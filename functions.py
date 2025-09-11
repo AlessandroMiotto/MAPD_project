@@ -7,7 +7,7 @@ from numpy.linalg import qr, svd
 
 
 ## CHOLESKY
-def compute_choleskyQR_parallel_optimal(X_da : dask.array.Array):
+def cholesky_tsqr(X_da : dask.array.Array):
     def gramMatMul(x): #Declaring it this way will make the name appear in the Dask dashboard
         return x.T @ x
     def MatMul(x, R_inv): # Again, as above
@@ -22,12 +22,12 @@ def compute_choleskyQR_parallel_optimal(X_da : dask.array.Array):
     # Compute R as the Cholesky decomposition on the global Gram matrix (as a delayed even if a serial operation just call .compute at the end)
     R = dask.delayed(np.linalg.cholesky)(Gram_global_delayed)
     
-    R = R.persist() # This time, persist R (compute it but don't send it to the client
+    #R = R.persist() # This time, persist R (compute it but don't send it to the client
     R_inv = dask.delayed(Inverse)(R)
 
     X_da = X_da.persist()    # Persist again X_da, since X_da.to_delayed seems to cause troubles. If already in memory, this does nothing
     Q = X_da.map_blocks(MatMul, R_inv, dtype=X_da.dtype)
-    Q = Q.persist() # Persist Q, so that it won't be sent directly to the client
+    #Q = Q.persist() # Persist Q, so that it won't be sent directly to the client. To make things homogenous, Q must be persisted outside of function
     return Q, R
 
 
