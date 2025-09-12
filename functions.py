@@ -3,7 +3,8 @@ import dask
 import dask.array as da
 from dask import delayed, compute
 import dask.array as da
-from numpy.linalg import qr, svd
+from numpy.linalg import qr, svd, matmul
+from scipy.linalg import solve_triangular 
 
 
 ## CHOLESKY
@@ -30,6 +31,37 @@ def cholesky_tsqr(X_da : dask.array.Array):
     #Q = Q.persist() # Persist Q, so that it won't be sent directly to the client. To make things homogenous, Q must be persisted outside of function
     return Q, R
 
+
+def indirect_tsqr(X_da):
+    def compute_R(block):
+        # np.linalg.qr with mode='r' gives just the R matrix
+        R = np.linalg.qr(block, mode="r")
+        return R
+
+    n_cols = X_da.shape[1]
+
+    R_blocks = X_da.map_blocks(compute_R, dtype=X_da.dtype, chunks=(n_cols, n_cols))
+    # Now R_blocks is a stack of n x n matrices (one per partition)
+    # Its shape is (#chunks * n, n)
+
+    #Dask has da.linalg.qr, but it assumes the whole array is large and chunked regularly.
+    #To get the final global R, you must combine all the Ri
+    #That means at some point, the data has to come together into a single place (can’t keep it sharded).
+    # So we bring the data to the driver because it is very small, because it optimizes the uses of np.linalg.qr, we are gathering the small stuff
+    R_stack = R_blocks.persist()   # NumPy array, shape (p*n, n)
+
+    # Small QR on driver to combine them into the final R
+    _, R = np.linalg.qr(R_stack)
+    # delay the computing of qr
+
+    # Instead of materializing Q, compute a small R^{-1} (n x n).
+    I = np.eye(n_cols, dtype=X_da.dtype)
+    R_inv = solve_triangular(R, I, lower=False)  # stable
+
+    # Broadcast Rinv to every chunk: Q = A @ R^{-1}
+    Q_da = X_da @ R_inv   # still a Dask Array, lazy
+
+    return Q_da, R      #Q_da because it is lazy, it is still a Dask array
 
 
 # INDIRECT TSQR

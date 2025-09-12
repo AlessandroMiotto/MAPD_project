@@ -1,0 +1,2 @@
+n_partitions time err
+30 3.420747 0.382398
